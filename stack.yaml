@@ -39,7 +39,11 @@ packages:
 - '.'
 # Dependency packages to be pulled from upstream that are not in the resolver
 # (e.g., acme-missiles-0.3)
-extra-deps: []
+extra-deps:
+- alsa-seq-0.6.0.7
+- alsa-core-0.5.0.1
+- poll-0.0
+
 
 # Override default flag values for local packages and extra-deps
 flags: {}
@@ -64,3 +68,7 @@ extra-package-dbs: []
 #
 # Allow a newer minor version of GHC than the snapshot specifies
 # compiler-check: newer-minor
+nix:
+  enable: true
+  pure: false
+  shell-file: shell.nix

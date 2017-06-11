@@ -16,6 +16,7 @@ dependencies:
   - base >= 4.7 && < 5
   - process
   - random
+  - alsa-seq
 
 library:
   source-dirs: src
@@ -26,6 +27,20 @@ executables:
     dependencies:
     - base
     - synthetic
+
+executables:
+  alsa-test:
+    main: AlsaTest.hs
+    dependencies:
+    - alsa-core
+    - alsa-seq
+    - base
+    - mtl
+    - synthetic
+    - transformers
+    - unix
+    - vector
+    - foreign-store
 
 tests:
   synthetic-test:

@@ -4,10 +4,11 @@
 module Sound.Synthetic where
 
 import Control.Concurrent (forkIO)
+import Control.Monad (forever)
 import Control.Monad (void)
 import Data.Char (chr)
-import System.IO
 import Data.Function ((&))
+import System.IO
 import System.Random
 import System.Process (
   callCommand,
@@ -99,6 +100,15 @@ play list = do
   hSetBuffering h NoBuffering
   hSetEncoding h char8
   mapM_ (hPutChar h . chr . quantize) list
+
+playIO :: IO [Double] -> IO ()
+playIO list = do
+  (Just h, _, _, _) <- createProcess (proc "aplay" []) { std_in = CreatePipe }
+  hSetBuffering h NoBuffering
+  hSetEncoding h char8
+  forever $ do
+    l <- list
+    hPutStr h $ (chr . quantize) <$> l
 
 -- A cheap livecode command
 -- FIXME: don't use pkill, reduce scope of side effects :)
