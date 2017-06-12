@@ -20,22 +20,22 @@ import System.Process (
   waitForProcess,
   )
 
-sineWavetable :: Int -> [Double]
+sineWavetable :: Int -> [Float]
 sineWavetable (fromIntegral -> tableSize) = sin <$> period
   where
     period = do
       x <- [0..(tableSize - 1)]
       return $ x * 2 * pi / tableSize
 
-squareWavetable :: Int -> [Double]
+squareWavetable :: Int -> [Float]
 squareWavetable tableSize = replicate half 0.5 ++ replicate (tableSize - half) (-0.5)
   where
     half = tableSize `div` 2
 
-sawWavetable :: Int -> [Double]
+sawWavetable :: Int -> [Float]
 sawWavetable (fromIntegral -> tableSize) = (/tableSize) <$> [0..(tableSize -1)]
 
-whiteWavetable :: Int -> [Double]
+whiteWavetable :: Int -> [Float]
 whiteWavetable (fromIntegral -> tableSize) = take tableSize whiteNoise
   where
     whiteNoise = snd . properFraction <$> randoms (mkStdGen 6)
@@ -56,7 +56,7 @@ everyNth n xs = everyNth' n 1 xs
 -- linearResample :: Int -> [a] -> [a]
 -- linearResample = _
 
-printSignal :: [Double] -> IO ()
+printSignal :: [Float] -> IO ()
 printSignal = mapM_ $ \x ->
   let
     n = floor (x * size + size)
@@ -66,53 +66,53 @@ printSignal = mapM_ $ \x ->
 
 type SampleRate = Int
 
-tones :: SampleRate -> [Double] -> [(Double, Double)] -> [Double]
+tones :: SampleRate -> [Float] -> [(Float, Float)] -> [Float]
 tones sr wavetable notes = mconcat (toSample <$> notes)
   where
     toSample (freq, dur) = signal sr freq wavetable
       & take (floor (dur * fromIntegral sr))
 
-delaySecs :: SampleRate -> Double -> Double -> [Double] -> [Double]
+delaySecs :: SampleRate -> Float -> Float -> [Float] -> [Float]
 delaySecs sr delay m sig = zipWith mix sig (drop numFrames sig)
   where
     numFrames = floor $ fromIntegral sr * delay
     mix a b = (1 - m) * a + m * b
 
-midi2cps :: Double -> Double
+midi2cps :: Float -> Float
 midi2cps x = 2 ** ((x - 69)/12) * 440
 
-signal :: SampleRate -> Double -> [Double] -> [Double]
+signal :: SampleRate -> Float -> [Float] -> [Float]
 signal sr freq wavetable = wavetable
   & cycle
   & everyNth flooredResampleRatio
   where
     flooredResampleRatio = floor freq * (length wavetable) `div` sr
 
-quantize :: Double -> Int
+quantize :: Float -> Int
 quantize x = floor (x * size + size)
   where
     size = 255 / 2
 
 -- aplay is by default unsigned 8 bit, 8000Hz
-play :: [Double] -> IO ()
+play :: [Float] -> IO ()
 play list = do
   (Just h, _, _, _) <- createProcess (proc "aplay" []) { std_in = CreatePipe }
   hSetBuffering h NoBuffering
   hSetEncoding h char8
   mapM_ (hPutChar h . chr . quantize) list
 
-playIO :: IO [Double] -> IO ()
-playIO list = do
+playIO :: IO Float -> IO ()
+playIO getSample = do
   (Just h, _, _, _) <- createProcess (proc "aplay" []) { std_in = CreatePipe }
   hSetBuffering h NoBuffering
   hSetEncoding h char8
   forever $ do
-    l <- list
-    hPutStr h $ (chr . quantize) <$> l
+    sample <- getSample
+    hPutChar h $ (chr . quantize) sample
 
 -- A cheap livecode command
 -- FIXME: don't use pkill, reduce scope of side effects :)
-livecode :: [Double] -> IO ()
+livecode :: [Float] -> IO ()
 livecode list = do
   (_, _, _, p) <- createProcess (proc "pkill" ["aplay"]) { delegate_ctlc = True }
   waitForProcess p

@@ -14,7 +14,7 @@ spec = do
   describe "Oscillator" $ do
     describe "Wavetables" $ do
       let
-        testWaveTableGen :: String -> (Int -> [Double]) -> Spec
+        testWaveTableGen :: String -> (Int -> [Float]) -> Spec
         testWaveTableGen name wavetableGen = do
           describe name $ do
             it "preserves length" $ property $ \(fromIntegral @ Natural -> n) ->

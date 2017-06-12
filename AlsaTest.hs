@@ -1,12 +1,15 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE ViewPatterns #-}
 
-import Control.Concurrent (forkIO, throwTo, ThreadId, threadDelay, killThread)
+import Control.Concurrent (forkIO, forkOS, throwTo, ThreadId, threadDelay, killThread, setNumCapabilities)
+import Control.Concurrent.MVar
 import qualified Control.Exception as Exception
 import Control.Monad (forever, void)
-import Control.Monad.Trans (liftIO)
+import Control.Monad.Trans (liftIO, lift)
 import Control.Monad.Trans.Cont (ContT(..), runContT)
 import Data.Function ((&))
+import Data.Profunctor
 import Data.Word (Word8, Word32)
 import qualified Data.List as List
 import qualified Foreign.Store as ForeignStore
@@ -21,10 +24,14 @@ import qualified Sound.ALSA.Sequencer.Connect as Connect
 import qualified Sound.ALSA.Sequencer.Event as Event
 import qualified Sound.ALSA.Sequencer.Port as Port
 import qualified Sound.ALSA.Sequencer.Port.Info as PortInfo
+import qualified Sound.JACK as JACK
+import qualified Sound.JACK.Exception as JACK
+import qualified Sound.JACK.Audio as JACKAudio
 import qualified System.Posix.Signals as POSIX
 import System.Exit (exitSuccess, ExitCode(ExitSuccess))
+import Foreign.C.Types (CFloat(..))
 
-import Sound.Synthetic
+import Sound.Synthetic (everyNth, midi2cps)
 
 handleException :: IO () -> IO ()
 handleException act =
@@ -64,33 +71,70 @@ runOnce index computation = do
     Just store -> ForeignStore.readStore (ForeignStore.Store index)
 
 getNonzeroIndicies :: (Num a, Ord a) => [a] -> [Int]
-getNonzeroIndicies words = zip words [1..]
-  & filter ((>0) . fst)
-  & fmap snd
+getNonzeroIndicies words = zip [1..] words
+  & filter ((>0) . snd)
+  & fmap fst
+
+sineF :: Int -> (Int -> Float)
+sineF (fromIntegral -> sr) (fromIntegral -> index) = sin (index * 2 * pi / sr)
+
+mkSinWavetable :: Int -> IO (Int -> IO [Float])
+mkSinWavetable sr = do
+  stateRef <- newMVar 0
+  return $ \incr -> do
+    modifyMVar stateRef $ \state -> do
+      let samples = sineF sr <$> [state..(state + incr)]
+      return (state + incr + 1, samples)
+
+mkSinOsc :: Int -> IO (Float -> IO Float)
+mkSinOsc sr = do
+  sinWavetable <- mkSinWavetable sr
+  return $ \freq -> sinWavetable (1 * floor freq)
+    & fmap head
+
+
+withJACKClient :: IO Float -> IO ()
+withJACKClient getSample = JACK.handleExceptions $ flip runContT return $ do
+  client <- ContT $ JACK.withClientDefault "foo"
+  input <- ContT $ JACK.withPort client "input"
+  output <- ContT $ JACK.withPort client "output"
+  let program = (const (CFloat <$> getSample))
+  ContT $ \f -> JACKAudio.withProcessMono client input program output $ JACK.withActivation client (f ())
+  lift $ JACK.connect client "foo:output" "system:playback_1"
+  lift $ JACK.connect client "foo:output" "system:playback_2"
+  lift . lift $ do
+    putStrLn $ "started foo..."
+    JACK.waitForBreak
 
 main :: IO ()
 main = do
-  noteVec <- runOnce 0 $ VUM.replicate 256 (0 :: Word8)
-
-  runOnce 1 $ forkIO $ connectTo "UM-ONE MIDI 1" $ \event -> do
+  velocitiesRef <- VUM.replicate 256 (0 :: Word8)
+  forkIO $ connectTo "UM-ONE MIDI 1" $ \event -> do
     let body = event & Event.body
     case body of
       Event.NoteEv noteev note -> do
         let pitch = note & Event.noteNote & Event.unPitch
         let vel = note & Event.noteVelocity & Event.unVelocity
-        VUM.write noteVec (fromIntegral pitch) vel
+        VUM.write velocitiesRef (fromIntegral pitch) vel
       _ -> return ()
 
-  playIO $ do
-    velocities <- VU.toList <$> VU.freeze noteVec
-    let notes = getNonzeroIndicies velocities
-    case notes of
-      [] -> return (replicate 8000 0)
-      _ -> do
-        let
-          toSig pitch = signal 8000 (midi2cps pitch) (sineWavetable 8000)
-          sig = foldr (zipWith (+)) (repeat 0) (toSig . fromIntegral <$> notes)
-            & fmap (/(fromIntegral $ length $ notes))
-        return $ sig & take 8000
+  freqRef <- VUM.replicate 1 (440 :: Float)
+  counterRef <- newMVar (0 :: Int)
 
--- TODO: implement a ringbuffer in haskell
+  forkIO $ forever $ do
+    velocities <- VU.toList <$> VU.freeze velocitiesRef
+    let notesToPlay = getNonzeroIndicies velocities
+    counter <- takeMVar counterRef
+    putMVar counterRef (counter + 1)
+    case notesToPlay of
+      [] -> return ()
+      _ -> do
+        let index = counter `mod` length notesToPlay
+        let note = (notesToPlay !! index) - 1
+        let freq = midi2cps $ fromIntegral note
+        VUM.write freqRef 0 freq
+        print note
+    threadDelay (10^6 * 60 `div` (120 * 16))
+  sinOsc <- mkSinOsc 48000
+
+  withJACKClient $ VUM.read freqRef 0 >>= sinOsc
