@@ -10,9 +10,8 @@ import Control.Monad.Trans (liftIO, lift)
 import Control.Monad.Trans.Cont (ContT(..), runContT)
 import Data.Function ((&))
 import Data.Profunctor
-import Data.Word (Word8, Word32)
+import Data.Word (Word8)
 import qualified Data.List as List
-import qualified Foreign.Store as ForeignStore
 import qualified Data.Vector.Unboxed.Mutable as VUM
 import qualified Data.Vector.Unboxed as VU
 import qualified Sound.ALSA.Exception as AlsaExc
@@ -57,41 +56,39 @@ connectTo expectedPortName eventHandler = flip runContT return $ do
   else
     return ()
 
-handleCtrlC :: IO () -> IO ()
-handleCtrlC handler = void $ POSIX.installHandler POSIX.keyboardSignal (POSIX.Catch handler) Nothing
-
-runOnce :: Word32 -> IO a -> IO a
-runOnce index computation = do
-  result <- ForeignStore.lookupStore index
-  case result of
-    Nothing -> do
-      x <- computation
-      ForeignStore.writeStore (ForeignStore.Store index) x
-      return x
-    Just store -> ForeignStore.readStore (ForeignStore.Store index)
-
 getNonzeroIndicies :: (Num a, Ord a) => [a] -> [Int]
 getNonzeroIndicies words = zip [1..] words
   & filter ((>0) . snd)
   & fmap fst
 
-sineF :: Int -> (Int -> Float)
-sineF (fromIntegral -> sr) (fromIntegral -> index) = sin (index * 2 * pi / sr)
+-- sineF :: Int -> (Int -> Float)
+-- sineF (fromIntegral -> sr) (fromIntegral -> index) = sin (index * 2 * pi / sr)
 
-mkSinWavetable :: Int -> IO (Int -> IO [Float])
-mkSinWavetable sr = do
-  stateRef <- newMVar 0
-  return $ \incr -> do
-    modifyMVar stateRef $ \state -> do
-      let samples = sineF sr <$> [state..(state + incr)]
-      return (state + incr + 1, samples)
+-- mkSinWavetable :: Int -> IO (Int -> IO [Float])
+-- mkSinWavetable sr = do
+--   stateRef <- newMVar 0
+--   return $ \incr -> do
+--     modifyMVar stateRef $ \state -> do
+--       let samples = sineF sr <$> [state..(state + incr)]
+--       return (state + incr + 1, samples)
+
+-- mkSinOsc :: Int -> IO (Float -> IO Float)
+-- mkSinOsc sr = do
+--   sinWavetable <- mkSinWavetable sr
+--   return $ \freq -> sinWavetable (1 * floor freq)
+--     & fmap head
 
 mkSinOsc :: Int -> IO (Float -> IO Float)
 mkSinOsc sr = do
-  sinWavetable <- mkSinWavetable sr
-  return $ \freq -> sinWavetable (1 * floor freq)
-    & fmap head
+  let
+    twopiperiod :: Float
+    twopiperiod = 2 * pi / fromIntegral sr
 
+  phaseRef <- VUM.replicate 1 (0 :: Int)
+  return $ \freq -> do
+    phase <- VUM.unsafeRead phaseRef 0
+    VUM.write phaseRef 0 (phase + floor freq)
+    return $ sin ((fromIntegral phase + freq) * twopiperiod)
 
 withJACKClient :: IO Float -> IO ()
 withJACKClient getSample = JACK.handleExceptions $ flip runContT return $ do
@@ -106,9 +103,26 @@ withJACKClient getSample = JACK.handleExceptions $ flip runContT return $ do
     putStrLn $ "started foo..."
     JACK.waitForBreak
 
+padWith :: [a] -> [a] -> [a]
+padWith (p:ps) (x:xs) = x : padWith ps xs
+padWith padding [] = padding
+
+-- FIXME maintain phase of voices
+
 main :: IO ()
 main = do
+  freqRef <- VUM.replicate 10 (0 :: Float)
   velocitiesRef <- VUM.replicate 256 (0 :: Word8)
+
+  let calculateFreqRefs = do
+        velocities <- VU.toList <$> VU.freeze velocitiesRef
+        let notesToPlay = getNonzeroIndicies velocities
+        let freqsToPlay = notesToPlay
+              & take 10
+              & fmap (midi2cps . fromIntegral . subtract 1)
+              & padWith (replicate 10 0)
+        sequence $ zipWith (VUM.write freqRef) [0..9] freqsToPlay
+
   forkIO $ connectTo "UM-ONE MIDI 1" $ \event -> do
     let body = event & Event.body
     case body of
@@ -116,25 +130,29 @@ main = do
         let pitch = note & Event.noteNote & Event.unPitch
         let vel = note & Event.noteVelocity & Event.unVelocity
         VUM.write velocitiesRef (fromIntegral pitch) vel
+        void calculateFreqRefs
       _ -> return ()
 
-  freqRef <- VUM.replicate 1 (440 :: Float)
-  counterRef <- newMVar (0 :: Int)
+  s0 <- mkSinOsc 48000
+  s1 <- mkSinOsc 48000
+  s2 <- mkSinOsc 48000
+  s3 <- mkSinOsc 48000
+  s4 <- mkSinOsc 48000
+  s5 <- mkSinOsc 48000
+  s6 <- mkSinOsc 48000
+  s7 <- mkSinOsc 48000
+  s8 <- mkSinOsc 48000
+  s9 <- mkSinOsc 48000
 
-  forkIO $ forever $ do
-    velocities <- VU.toList <$> VU.freeze velocitiesRef
-    let notesToPlay = getNonzeroIndicies velocities
-    counter <- takeMVar counterRef
-    putMVar counterRef (counter + 1)
-    case notesToPlay of
-      [] -> return ()
-      _ -> do
-        let index = counter `mod` length notesToPlay
-        let note = (notesToPlay !! index) - 1
-        let freq = midi2cps $ fromIntegral note
-        VUM.write freqRef 0 freq
-        print note
-    threadDelay (10^6 * 60 `div` (120 * 16))
-  sinOsc <- mkSinOsc 48000
-
-  withJACKClient $ VUM.read freqRef 0 >>= sinOsc
+  withJACKClient $ do
+    v0 <- VUM.read freqRef 0 >>= \val -> if val > 0 then s0 val else return 0
+    v1 <- VUM.read freqRef 1 >>= \val -> if val > 0 then s1 val else return 0
+    v2 <- VUM.read freqRef 2 >>= \val -> if val > 0 then s2 val else return 0
+    v3 <- VUM.read freqRef 3 >>= \val -> if val > 0 then s3 val else return 0
+    v4 <- VUM.read freqRef 4 >>= \val -> if val > 0 then s4 val else return 0
+    v5 <- VUM.read freqRef 5 >>= \val -> if val > 0 then s5 val else return 0
+    v6 <- VUM.read freqRef 6 >>= \val -> if val > 0 then s6 val else return 0
+    v7 <- VUM.read freqRef 7 >>= \val -> if val > 0 then s7 val else return 0
+    v8 <- VUM.read freqRef 8 >>= \val -> if val > 0 then s8 val else return 0
+    v9 <- VUM.read freqRef 9 >>= \val -> if val > 0 then s9 val else return 0
+    return $ (v0 + v1 + v2 + v3 + v4 + v5 + v6 + v7 + v8 + v9) / 10
