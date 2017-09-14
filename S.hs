@@ -31,23 +31,40 @@ fit ap' xs = speed (fromIntegral $ length xs) . ap' xs
 mix :: Float -> ([Float] -> [Float]) -> [Float] -> [Float]
 mix p f x  = zipWith (+) (f x & fmap (*p)) (x & fmap (*(1 - p)))
 
+sr = 48000
+
+white = (whiteWavetable sr & cycle)
+
 stream :: [Float]
-stream = tones 8000 table tonePairs
-  & zipWith (*) (sineWavetable 32000  & fmap (/3) & fmap (+0.5) & cycle)
-  & mix 0.5 $ zipWith (*) (cycle [0, 1])
-  & mix 0.5 $ drop (6000)
+stream = tones sr table tonePairs
+  & mix 0.25 $ zipWith (*) (cycle ([0, 1] >>= replicate (2^4)))
+  & fmap (tanh)
+  & mix 0.125 $ drop (sr * 3 `div` 10)
+  & mix 0.5 $ (zipWith (*) $ ((sineWavetable (sr * 8))
+                    & fmap (/2) 
+                    & fmap (+0.5) 
+                    & cycle 
+                    & mix 0.5 $ const white
+                 ))
   where
     table = []
-      & mappend (sineWavetable 8000)
+      & mappend (squareWavetable sr)
+      & fmap (tanh)
+      & fmap (tanh)
       & fmap (tanh)
 
     tonePairs = (fmap . first) midi2cps notePairs
 
-    notePairs = [(64, 1/2)]
-      & fit ap $ first . (+) <$> [0, -12]
-      & fit ap $ first . (+) <$> [0, 12]
-      & ap $ first . (+) <$> [-5, 0, 2, 0, -5, 0, 2, 0]
-      & fit ap $ first . (+) <$> [0, 12]
-      & fit ap $ first . (+) <$> [0, 12]
-      & ap $ first . (+) <$> [0, -3, 5, 2]
+    notePairs = [(78, 1/2)]
+      & fit ap (first . flip (+) <$> [0, -12, -19, -96, -28])
+      & fit ap $ first . (+) <$> [24, 12, 0, -12]
+      & ap $ first . (+) <$> [0, 12, 24]
+      & ap $ first . (+) <$> [0, -5, -7, -2]
+      & ap $ first . (+) <$> [0, 7]
+      & ap $ first . (+) <$> [0, -5]
+      & ap $ first . (+) <$> [-96, 0, 24, 0, 24, 0, 12, 0, 24 ]
       & cycle
+      -- & zipWith ($) $ first . (+) <$> cycle ([24, -128] >>= replicate 1)
+      -- & zipWith ($) $ first . ($) <$> cycle ([id,  (subtract 24), id] >>= replicate 1)
+      -- & zipWith ($) $ first . ($) <$> cycle ([id, id, (subtract 24)] >>= replicate 1)
+      -- & zipWith ($) $ second . (*) <$> cycle ([1, 0, 1, 0, 0, 0] >>= replicate 1)

@@ -84,7 +84,7 @@ midi2cps x = 2 ** ((x - 69)/12) * 440
 signal :: SampleRate -> Float -> [Float] -> [Float]
 signal sr freq wavetable = wavetable
   & cycle
-  & everyNth flooredResampleRatio
+  & everyNth (max 1 flooredResampleRatio)
   where
     flooredResampleRatio = floor freq * (length wavetable) `div` sr
 
@@ -96,7 +96,8 @@ quantize x = floor (x * size + size)
 -- aplay is by default unsigned 8 bit, 8000Hz
 play :: [Float] -> IO ()
 play list = do
-  (Just h, _, _, _) <- createProcess (proc "aplay" []) { std_in = CreatePipe }
+  -- (Just h, _, _, _) <- createProcess (proc "aplay" []) { std_in = CreatePipe }
+  (Just h, _, _, _) <- createProcess (proc "aplay" ["-f", "U8", "-c1", "-r48000"]) { std_in = CreatePipe }
   hSetBuffering h NoBuffering
   hSetEncoding h char8
   mapM_ (hPutChar h . chr . quantize) list
