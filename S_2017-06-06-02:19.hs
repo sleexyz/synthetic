@@ -23,31 +23,34 @@ replicateT :: Int -> [a] -> [a]
 replicateT n (x:xs) = replicate n x ++ replicateT n xs
 replicateT n [] = []
 
-speed :: (Functor f, Functor g) => Double -> f (g Double)  -> f (g Double)
+speed :: (Functor f, Functor g) => Float -> f (g Float)  -> f (g Float)
 speed n = fmap . fmap $ (/n)
 
-fit :: (Functor g) => ([g Double -> g Double] -> [g Double] -> [g Double]) -> [g Double -> g Double] -> [g Double] -> [g Double]
+fit :: (Functor g) => ([g Float -> g Float] -> [g Float] -> [g Float]) -> [g Float -> g Float] -> [g Float] -> [g Float]
 fit ap' xs = speed (fromIntegral $ length xs) . ap' xs
 
-stream :: [Double]
+stream :: [Float]
 stream = tones 8000 table tonePairs
   where
     table = []
-      & mappend (sawWavetable 8000)
+      & mappend (sineWavetable 8000)
+      & zipWith (*) (reverse $ sawWavetable 8000)
       & fmap (tanh)
 
     tonePairs = (fmap . first) midi2cps notePairs
-
     notePairs = (cycle notes `zip` cycle durations)
+      & (\n -> replicateT n . (fmap . second) (/(fromIntegral n))) 1
       & fit apT (first . flip (+) <$> [0, -12, -19, -24, -28])
+      & speed 1
+      & fit apT (first . flip (+) <$> [12])
 
     notes = [0]
-      & apT (fmap (+) [0, 12])
-      & apT (fmap (+) [0, -2])
-      & apT (fmap (+) [0, -2])
-      & apT (fmap (+) [0, 5])
-      & apT (fmap (+) [0, 12])
-      & ap [(+72)]
+      & apT [(+0), (+12)]
+      & apT [(+0), (subtract 2)]
+      & apT [(+0), (subtract 2)]
+      & apT [(+0), (+ 5)]
+      & apT [(+0), (+12)]
+      & ap [(+60)]
 
     durations = [1]
-      & ap [(/2)]
+      & ap [(/3)]

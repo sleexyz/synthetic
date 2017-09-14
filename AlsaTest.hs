@@ -22,6 +22,7 @@ import qualified Sound.ALSA.Sequencer.Client.Info as ClientInfo
 import qualified Sound.ALSA.Sequencer.Connect as Connect
 import qualified Sound.ALSA.Sequencer.Event as Event
 import qualified Sound.ALSA.Sequencer.Port as Port
+import qualified Sound.ALSA.Sequencer.Queue as Queue
 import qualified Sound.ALSA.Sequencer.Port.Info as PortInfo
 import qualified System.Posix.Signals as POSIX
 import System.Exit (exitSuccess, ExitCode(ExitSuccess))
@@ -45,27 +46,32 @@ getAddress h expectedPortName continuation = flip runContT return $ do
     continuation (Addr.Cons client port)
   else return () -- next iteration
 
-connectTo :: String -> ((Event.Data -> IO Word) -> IO ()) -> IO ()
+connectTo :: String -> ((SndSeq.T SndSeq.DuplexMode, Addr.T) -> IO ()) -> IO ()
 connectTo expectedPortName continuation = flip runContT return $ do
-  h :: SndSeq.T SndSeq.OutputMode <- ContT $ SndSeq.withDefault SndSeq.Block
+  h :: SndSeq.T SndSeq.DuplexMode <- ContT $ SndSeq.withDefault SndSeq.Block
   client <- liftIO $ Client.getId h
   liftIO $ Client.setName h ("Alsa Test")
-  port <- ContT $ Port.withSimple h "Output" (Port.caps [Port.capRead, Port.capSubsRead]) Port.typeHardware
+  port <- ContT $ Port.withSimple h "Output" (Port.caps [Port.capRead, Port.capSubsRead, Port.capWrite, Port.capSubsWrite]) Port.typeHardware
   let address = Addr.Cons client port
   ContT (getAddress h expectedPortName) >>= \sinkAddress -> ContT (Connect.withTo h port sinkAddress)
-  let send event = do
-        Event.output h $ Event.simple address event
-        Event.drainOutput h
-  liftIO $ continuation send
-    -- liftIO $ (Event.input h) >>= eventHandler
+  liftIO $ continuation (h, address)
+
+
 
 makeNote :: Word8 -> Event.Data
 makeNote pitch = Event.NoteEv Event.NoteOn (Event.simpleNote (Event.Channel 1) (Event.Pitch pitch) (Event.Velocity 255))
 
 main :: IO ()
-main = connectTo "VirMIDI 4-0" $ \send -> do
+main = connectTo "VirMIDI 4-0" $ \(h, address) -> do
+  let
+    send pitch = Event.output h $ Event.simple address (makeNote pitch)
+    tick = Event.output h $ Event.simple address $ Event.QueueEv (Event.QueueClock) Queue.direct
+    drain = Event.drainOutput h
+    bpm = 60
   forever $ do
-    send $ makeNote 69
-    send $ makeNote 72
-    send $ makeNote 79
-    threadDelay (10^6)
+    -- send 69
+    -- send 72
+    -- send 79
+    tick
+    drain
+    threadDelay ((60 * 10^6) `div` bpm `div` 24) -- 24 times per quarter note

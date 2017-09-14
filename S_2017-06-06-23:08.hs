@@ -11,13 +11,13 @@ apT f x = fmap (&) x `ap` f
 main :: IO ()
 main = livecode $ stream
 
-speed :: (Functor f, Functor g) => Double -> f (g Double)  -> f (g Double)
+speed :: (Functor f, Functor g) => Float -> f (g Float)  -> f (g Float)
 speed n = fmap . fmap $ (/n)
 
-fit :: (Functor g) => ([g Double -> g Double] -> [g Double] -> [g Double]) -> [g Double -> g Double] -> [g Double] -> [g Double]
+fit :: (Functor g) => ([g Float -> g Float] -> [g Float] -> [g Float]) -> [g Float -> g Float] -> [g Float] -> [g Float]
 fit ap' xs = speed (fromIntegral $ length xs) . ap' xs
 
-stream :: [Double]
+stream :: [Float]
 stream = tones 8000 table tonePairs
   where
     table = []
